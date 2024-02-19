@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from functools import cached_property
 
-from .utils import GUIStateManager
+from .utils.activity_name_manager import ActivityNameManager
 
 file_dir = os.path.dirname(os.path.realpath(__file__))
 
@@ -96,7 +96,7 @@ class AgentConfig:
             'observer_model': self.observer_model,
             'planner_model': self.planner_model,
             'reflector_model': self.reflector_model,
-            'activity_name_map': GUIStateManager.activity_name_restore_map
+            'activity_name_map': ActivityNameManager.activity_name_restore_map
         }
         if self.persona is not None:
             config_dict['persona'] = self.persona.to_dict()
@@ -124,7 +124,7 @@ class AgentConfig:
     def set_app(self, app):
         self.app_name = app.apk.get_app_name()
         self.package_name = app.get_package_name()
-        self.main_activity = GUIStateManager.fix_activity_name(app.get_main_activity().split('/')[-1])
+        self.main_activity = ActivityNameManager.fix_activity_name(app.get_main_activity().split('/')[-1])
 
         package_name_tokens = self.package_name.split('.')
         if len(package_name_tokens) > 2:
@@ -140,7 +140,7 @@ class AgentConfig:
             else:
                 package_name_prefix = ''
         
-        app_activities = [GUIStateManager.fix_activity_name(a.split('/')[-1]) for a in app.activities if 'leakcanary' not in a and 'CrashReportDialog' not in a and package_name_prefix in a]
+        app_activities = [ActivityNameManager.fix_activity_name(a.split('/')[-1]) for a in app.activities if 'leakcanary' not in a and 'CrashReportDialog' not in a and package_name_prefix in a]
         self.app_activities = app_activities
 
     def set_output_dir(self, output_dir):

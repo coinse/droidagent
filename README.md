@@ -46,7 +46,7 @@ $ pip install -e . # install droidagent
 ## Run DroidAgent
 * Make sure that your Android device is connected or emulator is running.
 * Locate the APK file of the application under test (AUT) in the `target_apps` directory, with the name `[APP_NAME].apk`.
-* Run the following command in the `script` directory (add `--is_emulator` option if you are using an emulator):
+* Run the following command in the `scripts` directory (add `--is_emulator` option if you are using an emulator):
 ```bash
 $ cd script
 $ python run_droidagent.py --app [APP_NAME] --output_dir [OUTPUT_DIR] --is_emulator

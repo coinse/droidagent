@@ -1,6 +1,7 @@
 from ..config import agent_config
+from ..app_state import AppState
 from ..model import get_next_assistant_message, zip_messages
-from ..utils import *
+from ..utils.stringutil import remove_quotes
 
 import re
 import json
@@ -8,13 +9,13 @@ import json
 MAX_RETRY = 1
 
 def reflect_task(memory, prompt_recorder=None):
-    task = memory.task
+    task = memory.working_memory.task.summary
     system_message = f'''You are a helpful task reflector for a person named "{agent_config.persona_name}" who is using an Android mobile application named {agent_config.app_name}.
 
 {agent_config.persona_name} is performing tasks on the app to {agent_config.ultimate_goal}. {agent_config.persona_name} is not familiar with the app and does not fully know what the app can do. {agent_config.persona_name} is trying to learn the app's functionalities by performing realistic tasks on the app.
     - The app has following pages: {remove_quotes(str(agent_config.app_activities))}
-    - Currently, {agent_config.persona_name} has visited the following pages with the following number of times: {remove_quotes(json.dumps(memory.visited_activities))}
-    - Currently, {agent_config.persona_name} is on the {memory.current_gui_state.activity} page.
+    - Currently, {agent_config.persona_name} has visited the following pages with the following number of times: {remove_quotes(json.dumps(AppState.visited_activities))}
+    - Currently, {agent_config.persona_name} is on the {AppState.current_gui_state.activity} page.
 
 Currently, {agent_config.persona_name} has performed actions to accomplish the following task: {task}
 
@@ -28,12 +29,12 @@ Summarize the result of the task, and reflect on the task execution.
 
 Full task execution history:
 ===
-{memory.describe_working_memory()}
+{memory.working_memory.stringify()}
 ===
 
-Widgets in the current page (page name: {memory.current_gui_state.activity}):
+Widgets in the current page (page name: {AppState.current_gui_state.activity}):
 ===
-{memory.current_gui_state.describe_widgets_NL(length_limit=8000)}
+{AppState.current_gui_state.describe_widgets_NL(length_limit=8000)}
 ===
 
 Guideline for the task reflection based on the task result:

@@ -10,14 +10,19 @@ import friendlywords as fw
 from datetime import datetime
 from pathlib import Path
 
-from .gui_state import GUIState
-from .memory import Memory
-from .model import stringify_prompt, zip_messages
+from .app_state import AppState
+from .types.gui_state import GUIState
+from .memories.memory import Memory
+from .utils.prompt_recorder import PromptRecorder
+from .utils.logger import Logger
+from .model import APIUsageManager
+
+from .config import agent_config
+
 from ._observer import Observer
 from ._planner import Planner
 from ._actor import Actor
 from ._reflector import Reflector
-from .config import agent_config
 
 from ._actor_gptdroid import GPTDroidActor
 from ._actor_nocritique_noknowledge import NoCritiqueActor
@@ -34,20 +39,7 @@ MODE_OBSERVE = 'observe'
 
 MAX_ACTIONS = 13
 
-
-class PromptRecorder:
-    def __init__(self, exp_id):
-        self.state_tag = 'initial'
-        self.exp_id = exp_id
-
-    def set_state_tag(self, state_tag):
-        self.state_tag = state_tag
-    
-    def record(self, prompt, mode):
-        prompt_str = stringify_prompt(prompt)
-        with open(os.path.join(agent_config.agent_output_dir, 'prompts', f'prompt_{self.state_tag}_{datetime.now().strftime("%H%M%S")}_{mode}.txt'), 'w') as f:
-            f.write(prompt_str)
-
+logger = Logger(__name__)
     
 class Agent:
     def __init__(self, output_dir, app=None):
@@ -62,20 +54,11 @@ class Agent:
             exp_id = fw.generate('po', separator='-')
 
             self.exp_id = exp_id
-            self.prompt_recorder = PromptRecorder(exp_id)
+            self.prompt_recorder = PromptRecorder()
             self.memory = Memory(name=self.exp_id)
 
-        self.logger = logging.getLogger('agent')
-        self.logger.setLevel(logging.DEBUG)
-        file_handler = logging.FileHandler(os.path.join(agent_config.agent_output_dir, f'agent_{exp_id}.log'), mode='a')
-        file_handler.setLevel(logging.DEBUG)
-        file_handler.setFormatter(logging.Formatter('%(name)s:%(levelname)s - %(asctime)s: %(message)s'))
-        self.logger.addHandler(file_handler)
-        stream_handler = logging.StreamHandler()
-        stream_handler.setLevel(logging.INFO)
-        stream_handler.setFormatter(logging.Formatter('%(name)s:%(levelname)s - %(message)s'))
-        self.logger.addHandler(stream_handler)
-        self.logger.info(f'Agent ID: {exp_id}')
+        AppState.initialize(agent_config.app_name, agent_config.app_activities)
+        logger.info(f'Initialized an Agent with ID: {exp_id}')
 
     def save_memory_snapshot(self):
         memory_snapshot_dir = os.path.join(agent_config.agent_output_dir, 'memory_snapshots', f'step_{self.step_count}')
@@ -84,65 +67,20 @@ class Agent:
 
     def step(self, droidbot_state=None):
         raise NotImplementedError
-    
-    @property
-    def current_gui_state(self):
-        return self.memory.current_gui_state
 
     def set_current_gui_state(self, droidbot_state):
-        self.memory.set_current_gui_state(GUIState().from_droidbot_state(droidbot_state))
-        app_activity_depth = self.memory.current_gui_state.get_app_activity_depth()
-        if app_activity_depth != 0:
-            self.logger.warning(f'App is not in the foreground. Current activity stack: {self.memory.current_gui_state.activity_stack}')
+        AppState.set_current_gui_state(droidbot_state)
+        self.prompt_recorder.set_state_tag(AppState.current_gui_state.tag)
 
-        self.memory.add_visited_activity(self.memory.current_gui_state.activity)
-        self.prompt_recorder.set_state_tag(self.memory.current_gui_state.tag)
-        
-        # Check immediately captured temp messages are still visible
-        for widget in self.memory.temp_messages:
-            w = self.memory.current_gui_state.get_widget_by_signature(widget.signature)
-            if w is None:
-                self.current_gui_state.lost_messages.add(widget.text)
-
-        for message in self.memory.toasts:
-            self.current_gui_state.lost_messages.add(message)
-        
-        self.memory.temp_messages = []
-        self.memory.toasts = []
-
-    def capture_temporary_message(self, droidbot_state):
-        gui_state = GUIState().from_droidbot_state(droidbot_state)
-
-        _, appeared_widgets, _ = self.current_gui_state.diff_widgets(gui_state)
-
-        temp_message_count = 0
-        for widget in appeared_widgets:
-            if widget.text is not None and len(widget.text) > 0:
-                self.memory.temp_messages.append(widget)
-                temp_message_count += 1
-
-                # we don't want to capture too many messages
-                if temp_message_count > 3:
-                    break
-
-        return gui_state
-
-    def clear_temporary_message(self):
-        self.memory.temp_messages = []
-
-    def capture_toast_message(self, captured_toast_messages):
-        self.memory.toasts = captured_toast_messages
-
-    @staticmethod
-    def is_loading_state(droidbot_state):
-        gui_state = GUIState().from_droidbot_state(droidbot_state)
-        if len(gui_state.interactable_widget_ids) == 0:
-            return True
-
-        return False
-
-    def inject_memory(self, description, entry_type):
-        self.memory.add_entry(description, entry_type)
+    @property
+    def exp_data(self):
+        return {
+            'app_activities': AppState.activities,
+            'visited_activities': AppState.visited_activities,
+            'task_results': self.memory.task_memory.task_results,
+            'API_usage': APIUsageManager.usage,
+            'API_response_time': APIUsageManager.response_time
+        }
 
 
 class TaskBasedAgent(Agent):
@@ -157,13 +95,12 @@ class TaskBasedAgent(Agent):
         else:
             self.initialize(app, persona, debug_mode=debug_mode)
 
-        self.logger.info(f'Target App: {agent_config.app_name} ({agent_config.package_name})')
-        self.logger.info(f'Ultimate Goal: {agent_config.ultimate_goal}')
+        logger.info(f'Target App: {agent_config.app_name} ({agent_config.package_name})')
+        logger.info(f'Ultimate Goal: {agent_config.ultimate_goal}')
 
     def initialize(self, app, persona, debug_mode=False):
         for initial_knowledge in persona['initial_knowledge']:
-            self.inject_memory(initial_knowledge, 'INITIAL_KNOWLEDGE')
-            # FIXME: add to knowledge memory?
+            self.inject_knowledge_entry(initial_knowledge, 'INITIAL_KNOWLEDGE')
         
         if debug_mode:
             agent_config.set_debug_mode()
@@ -180,34 +117,22 @@ class TaskBasedAgent(Agent):
 
     @property
     def task(self):
-        return self.memory.task
+        return self.memory.working_memory.task
 
     @property
     def persona_name(self):
         return agent_config.persona_name
 
-    def record_test_script(self, task, task_result, interaction_log):
-        # TODO
-        with open(os.path.join(agent_config.agent_output_dir, 'recorded_scripts', f'script_{self.exp_id}.py'), 'a') as f:
-            f.write(f'# {task}\n')
-            f.write(f'# LLM-determined task result: {task_result}\n')
-            for interaction, mode in interaction_log:
-                if mode == 'ACTION':
-                    f.write(f'{interaction}\n')
-                elif mode == 'OBSERVATION':
-                    f.write(f'# {interaction}\n\n')
-            f.write('\n')
-
     def step(self, droidbot_state=None):
         self.step_count += 1
-        self.logger.info(f'Step {self.step_count}, Mode: {self.mode}')
-        self.logger.info(f'Current Activity Coverage: {len(self.memory.visited_activities)} / {len(agent_config.app_activities)}')
+        logger.info(f'Step {self.step_count}, Mode: {self.mode}')
+        logger.info(f'Current Activity Coverage: {len(AppState.visited_activities)} / {len(agent_config.app_activities)}')
 
         if droidbot_state is not None:
             self.set_current_gui_state(droidbot_state)
 
         with open(os.path.join(agent_config.agent_output_dir, 'exp_data.json'), 'w') as f:
-            json.dump(self.memory.exp_data, f, indent=2)
+            json.dump(self.exp_data, f, indent=2)
 
         if self.mode == MODE_PLAN:
             """
@@ -220,8 +145,8 @@ class TaskBasedAgent(Agent):
                 self.mode = MODE_OBSERVE
                 self.actor.action_count += 1
                 self.actor.critique_countdown -= 1
-                self.logger.info(f'* New task: {self.task}')
-                self.logger.info(f'* First action: {first_action}')
+                logger.info(f'* New task: {self.task}')
+                logger.info(f'* First action: {first_action}')
 
                 return first_action
 
@@ -233,7 +158,7 @@ class TaskBasedAgent(Agent):
             """
             task_result = self.reflector.reflect()
 
-            self.logger.info(f'* Task Reflection: {task_result}')
+            logger.info(f'* Task Reflection: {task_result}')
 
             self.mode = MODE_PLAN
 
@@ -243,13 +168,13 @@ class TaskBasedAgent(Agent):
             """
             * Action
             """
-            self.logger.info(f'[Current Task] {self.task}')
+            logger.info(f'[Current Task] {self.task}')
 
             if self.actor.action_count >= MAX_ACTIONS:
                 # If task does not end after MAX_ACTIONS actions, reflect
                 self.mode = MODE_REFLECT
-                self.memory.append_to_working_memory('The task gets too long, so I am going to put off the task and start a new task that could be easily achievable instead.', 'TASK_ABORTED')
-                self.logger.info(f'Task not completed with max actions, aborting...')
+                self.inject_action_entry('The task gets too long, so I am going to put off the task and start a new task that could be easily achievable instead.', 'TASK_ABORTED')
+                logger.info(f'Task not completed with max actions, aborting...')
                 return None
 
             next_action = self.actor.act()
@@ -258,7 +183,7 @@ class TaskBasedAgent(Agent):
                 self.mode = MODE_REFLECT
                 return None
             else:
-                self.logger.info(f'* Next action: {next_action}')
+                logger.info(f'* Next action: {next_action}')
                 self.mode = MODE_OBSERVE
                 return next_action
 
@@ -268,12 +193,18 @@ class TaskBasedAgent(Agent):
             """
             action_result = self.observer.observe_action_result()
             if action_result is not None:
-                self.logger.info(f'* Observation: """\n{action_result}\n"""')
+                logger.info(f'* Observation: """\n{action_result}\n"""')
             else:
-                self.logger.info(f'* Observation: No detectable change.')
+                logger.info(f'* Observation: No detectable change.')
 
             self.mode = MODE_ACT
             return None
+
+    def inject_knowledge_entry(self, description, entry_type):
+        self.memory.inject_entry(description, entry_type)
+
+    def inject_action_entry(self, description, entry_type):
+        self.memory.working_memory.add_step(description, AppState.current_activity, entry_type)
 
 # Ablation 1: Actor-only, GPTDroid replication
 class ActorOnlyAgent(Agent):
@@ -291,8 +222,8 @@ class ActorOnlyAgent(Agent):
 
     def step(self, droidbot_state=None):
         self.step_count += 1
-        self.logger.info(f'Step {self.step_count}')
-        self.logger.info(f'Current Activity Coverage: {len(self.memory.visited_activities)} / {len(agent_config.app_activities)}')
+        logger.info(f'Step {self.step_count}')
+        logger.info(f'Current Activity Coverage: {len(AppState.visited_activities)} / {len(agent_config.app_activities)}')
 
         if droidbot_state is not None:
             self.set_current_gui_state(droidbot_state)
@@ -303,18 +234,9 @@ class ActorOnlyAgent(Agent):
         else:
             action = self.actor.decide_next_action()
 
-        self.logger.info(f'* Next action: {action}')
+        logger.info(f'* Next action: {action}')
 
-        full_prompt = {
-            'system_message': self.actor.current_prompt['system_message'],
-            'user_messages': self.actor.full_prompt['user_messages'] + self.actor.current_prompt['user_messages'],
-            'assistant_messages': self.actor.full_prompt['assistant_messages'] + self.actor.current_prompt['assistant_messages'],
-        }
-        with open(os.path.join(agent_config.agent_output_dir, 'conversation.json'), 'w') as f:
-            json.dump(full_prompt, f, indent=2)
-
-        with open(os.path.join(agent_config.agent_output_dir, 'conversation.txt'), 'w') as f:
-            f.write(stringify_prompt(zip_messages(full_prompt['system_message'], full_prompt['user_messages'], full_prompt['assistant_messages'])))
+        PromptRecorder.record_gptdroid_conversation(self.actor.current_prompt, self.actor.full_prompt)
     
         return action
 
@@ -331,12 +253,12 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
         else:
             self.initialize(app, persona, debug_mode=debug_mode)
 
-        self.logger.info(f'Target App: {agent_config.app_name} ({agent_config.package_name})')
-        self.logger.info(f'Ultimate Goal: {agent_config.ultimate_goal}')
+        logger.info(f'Target App: {agent_config.app_name} ({agent_config.package_name})')
+        logger.info(f'Ultimate Goal: {agent_config.ultimate_goal}')
 
     def initialize(self, app, persona, debug_mode=False):
         for initial_knowledge in persona['initial_knowledge']:
-            self.inject_memory(initial_knowledge, 'INITIAL_KNOWLEDGE')
+            self.inject_knowledge_entry(initial_knowledge, 'INITIAL_KNOWLEDGE')
             # FIXME: add to knowledge memory?
         
         if debug_mode:
@@ -360,28 +282,16 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
     def persona_name(self):
         return agent_config.persona_name
 
-    def record_test_script(self, task, task_result, interaction_log):
-        # TODO
-        with open(os.path.join(agent_config.agent_output_dir, 'recorded_scripts', f'script_{self.exp_id}.py'), 'a') as f:
-            f.write(f'# {task}\n')
-            f.write(f'# LLM-determined task result: {task_result}\n')
-            for interaction, mode in interaction_log:
-                if mode == 'ACTION':
-                    f.write(f'{interaction}\n')
-                elif mode == 'OBSERVATION':
-                    f.write(f'# {interaction}\n\n')
-            f.write('\n')
-
     def step(self, droidbot_state=None):
         self.step_count += 1
-        self.logger.info(f'Step {self.step_count}, Mode: {self.mode}')
-        self.logger.info(f'Current Activity Coverage: {len(self.memory.visited_activities)} / {len(agent_config.app_activities)}')
+        logger.info(f'Step {self.step_count}, Mode: {self.mode}')
+        logger.info(f'Current Activity Coverage: {len(AppState.visited_activities)} / {len(agent_config.app_activities)}')
+
+        with open(os.path.join(agent_config.agent_output_dir, 'exp_data.json'), 'w') as f:
+            json.dump(self.exp_data, f, indent=2)
 
         if droidbot_state is not None:
             self.set_current_gui_state(droidbot_state)
-
-        with open(os.path.join(agent_config.agent_output_dir, 'exp_data.json'), 'w') as f:
-            json.dump(self.memory.exp_data, f, indent=2)
 
         if self.mode == MODE_PLAN:
             """
@@ -393,8 +303,8 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
             if first_action is not None:
                 self.mode = MODE_OBSERVE
                 self.actor.action_count += 1
-                self.logger.info(f'* New task: {self.task}')
-                self.logger.info(f'* First action: {first_action}')
+                logger.info(f'* New task: {self.task}')
+                logger.info(f'* First action: {first_action}')
 
                 return first_action
 
@@ -406,7 +316,7 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
             """
             task_result = self.reflector.reflect()
 
-            self.logger.info(f'* Task Reflection: {task_result}')
+            logger.info(f'* Task Reflection: {task_result}')
 
             self.mode = MODE_PLAN
 
@@ -416,13 +326,13 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
             """
             * Action
             """
-            self.logger.info(f'[Current Task] {self.task}')
+            logger.info(f'[Current Task] {self.task}')
 
             if self.actor.action_count >= MAX_ACTIONS:
                 # If task does not end after MAX_ACTIONS actions, reflect
                 self.mode = MODE_REFLECT
-                self.memory.append_to_working_memory('The task gets too long, so I am going to put off the task and start a new task that could be easily achievable instead.', 'TASK_ABORTED')
-                self.logger.info(f'Task not completed with max actions, aborting...')
+                self.inject_action_entry('The task gets too long, so I am going to put off the task and start a new task that could be easily achievable instead.', 'TASK_ABORTED')
+                logger.info(f'Task not completed with max actions, aborting...')
                 return None
 
             next_action = self.actor.act()
@@ -431,7 +341,7 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
                 self.mode = MODE_REFLECT
                 return None
             else:
-                self.logger.info(f'* Next action: {next_action}')
+                logger.info(f'* Next action: {next_action}')
                 self.mode = MODE_OBSERVE
                 return next_action
 
@@ -441,9 +351,9 @@ class TaskBasedAgentNoCritiqueNoKnowledge(Agent):
             """
             action_result = self.observer.observe_action_result()
             if action_result is not None:
-                self.logger.info(f'* Observation: """\n{action_result}\n"""')
+                logger.info(f'* Observation: """\n{action_result}\n"""')
             else:
-                self.logger.info(f'* Observation: No detectable change.')
+                logger.info(f'* Observation: No detectable change.')
 
             self.mode = MODE_ACT
             return None
@@ -462,12 +372,12 @@ class TaskBasedAgentNoKnowledge(Agent):
         else:
             self.initialize(app, persona, debug_mode=debug_mode)
 
-        self.logger.info(f'Target App: {agent_config.app_name} ({agent_config.package_name})')
-        self.logger.info(f'Ultimate Goal: {agent_config.ultimate_goal}')
+        logger.info(f'Target App: {agent_config.app_name} ({agent_config.package_name})')
+        logger.info(f'Ultimate Goal: {agent_config.ultimate_goal}')
 
     def initialize(self, app, persona, debug_mode=False):
         for initial_knowledge in persona['initial_knowledge']:
-            self.inject_memory(initial_knowledge, 'INITIAL_KNOWLEDGE')
+            self.inject_knowledge_entry(initial_knowledge, 'INITIAL_KNOWLEDGE')
             # FIXME: add to knowledge memory?
         
         if debug_mode:
@@ -491,28 +401,16 @@ class TaskBasedAgentNoKnowledge(Agent):
     def persona_name(self):
         return agent_config.persona_name
 
-    def record_test_script(self, task, task_result, interaction_log):
-        # TODO
-        with open(os.path.join(agent_config.agent_output_dir, 'recorded_scripts', f'script_{self.exp_id}.py'), 'a') as f:
-            f.write(f'# {task}\n')
-            f.write(f'# LLM-determined task result: {task_result}\n')
-            for interaction, mode in interaction_log:
-                if mode == 'ACTION':
-                    f.write(f'{interaction}\n')
-                elif mode == 'OBSERVATION':
-                    f.write(f'# {interaction}\n\n')
-            f.write('\n')
-
     def step(self, droidbot_state=None):
         self.step_count += 1
-        self.logger.info(f'Step {self.step_count}, Mode: {self.mode}')
-        self.logger.info(f'Current Activity Coverage: {len(self.memory.visited_activities)} / {len(agent_config.app_activities)}')
+        logger.info(f'Step {self.step_count}, Mode: {self.mode}')
+        logger.info(f'Current Activity Coverage: {len(AppState.visited_activities)} / {len(agent_config.app_activities)}')
 
         if droidbot_state is not None:
             self.set_current_gui_state(droidbot_state)
 
         with open(os.path.join(agent_config.agent_output_dir, 'exp_data.json'), 'w') as f:
-            json.dump(self.memory.exp_data, f, indent=2)
+            json.dump(self.exp_data, f, indent=2)
 
         if self.mode == MODE_PLAN:
             """
@@ -525,8 +423,8 @@ class TaskBasedAgentNoKnowledge(Agent):
                 self.mode = MODE_OBSERVE
                 self.actor.action_count += 1
                 self.actor.critique_countdown -= 1
-                self.logger.info(f'* New task: {self.task}')
-                self.logger.info(f'* First action: {first_action}')
+                logger.info(f'* New task: {self.task}')
+                logger.info(f'* First action: {first_action}')
 
                 return first_action
 
@@ -538,7 +436,7 @@ class TaskBasedAgentNoKnowledge(Agent):
             """
             task_result = self.reflector.reflect()
 
-            self.logger.info(f'* Task Reflection: {task_result}')
+            logger.info(f'* Task Reflection: {task_result}')
 
             self.mode = MODE_PLAN
 
@@ -548,13 +446,13 @@ class TaskBasedAgentNoKnowledge(Agent):
             """
             * Action
             """
-            self.logger.info(f'[Current Task] {self.task}')
+            logger.info(f'[Current Task] {self.task}')
 
             if self.actor.action_count >= MAX_ACTIONS:
                 # If task does not end after MAX_ACTIONS actions, reflect
                 self.mode = MODE_REFLECT
-                self.memory.append_to_working_memory('The task gets too long, so I am going to put off the task and start a new task that could be easily achievable instead.', 'TASK_ABORTED')
-                self.logger.info(f'Task not completed with max actions, aborting...')
+                self.inject_action_entry('The task gets too long, so I am going to put off the task and start a new task that could be easily achievable instead.', 'TASK_ABORTED')
+                logger.info(f'Task not completed with max actions, aborting...')
                 return None
 
             next_action = self.actor.act()
@@ -563,7 +461,7 @@ class TaskBasedAgentNoKnowledge(Agent):
                 self.mode = MODE_REFLECT
                 return None
             else:
-                self.logger.info(f'* Next action: {next_action}')
+                logger.info(f'* Next action: {next_action}')
                 self.mode = MODE_OBSERVE
                 return next_action
 
@@ -573,9 +471,9 @@ class TaskBasedAgentNoKnowledge(Agent):
             """
             action_result = self.observer.observe_action_result()
             if action_result is not None:
-                self.logger.info(f'* Observation: """\n{action_result}\n"""')
+                logger.info(f'* Observation: """\n{action_result}\n"""')
             else:
-                self.logger.info(f'* Observation: No detectable change.')
+                logger.info(f'* Observation: No detectable change.')
 
             self.mode = MODE_ACT
             return None

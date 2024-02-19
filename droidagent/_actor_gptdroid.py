@@ -6,13 +6,15 @@ import copy
 
 import openai
 
+from .app_state import AppState
 from .config import agent_config
-from .action import *
-from .utils import *
+from .utils.logger import Logger
+from .types.action import *
 from .prompts.act_gptdroid_style import prompt_first_action, prompt_next_action
 
 MODEL = agent_config.actor_model
 
+logger = Logger(__name__)
 
 class GPTDroidActor():
     def __init__(self, memory):
@@ -28,12 +30,18 @@ class GPTDroidActor():
             'assistant_messages': [],
         }
         self.performed_actions = []
-        self.logger = logging.getLogger('agent')
 
     def decide_first_action(self):
         action = prompt_first_action(self.memory, self.current_prompt)
         self.performed_actions.append(action)
-        self.memory.update_widget_knowledge(self.memory.current_gui_state.signature, self.memory.current_activity, action.target_widget, action, '', '')
+        self.memory.spatial_memory.add_widget_wise_observation(
+            AppState.current_activity, 
+            AppState.current_gui_state.signature, 
+            action.target_widget.signature, 
+            None,
+            action, 
+            None
+        )
 
         self.full_prompt['system_message'] = self.current_prompt['system_message']
 
@@ -49,7 +57,7 @@ class GPTDroidActor():
                 action = prompt_next_action(self.memory, error_message=None, full_prompt=self.current_prompt, contain_feedback=contain_feedback)
             except (openai.BadRequestError) as e:
                 # exceed max token limit: initialize prompt
-                self.logger.info(f'Exceeded max token limit. Initialize prompt.')
+                logger.info(f'Exceeded max token limit. Initialize prompt.')
 
                 self.full_prompt['user_messages'].extend(self.current_prompt['user_messages'][:-1])
                 self.full_prompt['assistant_messages'].extend(self.current_prompt['assistant_messages'])
@@ -63,9 +71,14 @@ class GPTDroidActor():
         
         self.performed_actions.append(action)
         if action.target_widget is not None:
-            self.memory.update_widget_knowledge(self.memory.current_gui_state.signature, self.memory.current_activity, action.target_widget, action, '', '')
-
-
+            self.memory.spatial_memory.add_widget_wise_observation(
+                AppState.current_activity, 
+                AppState.current_gui_state.signature, 
+                action.target_widget.signature,
+                None,
+                action,
+                None
+            )
 
         return action
 

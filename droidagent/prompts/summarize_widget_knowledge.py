@@ -4,7 +4,7 @@ from ..model import get_next_assistant_message, zip_messages
 MAX_RETRY = 1
 
 
-def prompt_summarized_widget_knowledge(memory, widget_description, relevant_widget_observations, prompt_recorder=None):
+def prompt_summarized_widget_knowledge(widget_description, relevant_widget_observations, prompt_recorder=None):
     system_message = f'''You are a helpful assistant who can infer the role and functionality of Android GUI widget based on previous user interactions on the widget, so that the user can understand the widget better.'''
 
     user_messages = []

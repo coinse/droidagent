@@ -1,4 +1,5 @@
 from ..config import agent_config
+from ..app_state import AppState
 from ..model import get_next_assistant_message, zip_messages
 from ..functions.possible_actions import *
 from ..utils import *
@@ -8,21 +9,9 @@ QUERY_COUNT = 3
 # Do we need long-term view?
 # Inference on the remaining steps needed to complete the task: <1~2 sentences according to the memory, current app state, and the task end condition>
 
-def initialize_possible_actions(memory):
-    possible_action_functions = {}
-    function_map = {}
-    current_context.set_widgets(memory.current_gui_state.actiontype2widgets)
-    function_creators = [create_touch_action_definition, create_set_text_action_definition, create_scroll_action_definition, create_long_touch_action_definition, create_go_back_action_definition, create_end_task_definition, create_wait_definition]
-
-    for function_creator in function_creators:
-        function_def, func = function_creator()
-        possible_action_functions[function_def['name']] = function_def
-        function_map[function_def['name']] = func
-
-    return possible_action_functions, function_map
 
 def prompt_action(memory, prompt_recorder=None):
-    possible_action_functions, function_map = initialize_possible_actions(memory)
+    possible_action_functions, function_map = initialize_possible_actions()
 
     system_message = f'''
 You are a helpful assistant to guide a user named {agent_config.persona_name} to select an appropriate GUI action to accomplish a task on an Android mobile application named {agent_config.app_name}.
@@ -39,7 +28,7 @@ The profile of {agent_config.persona_name} is as follows:
 or end the task if the task is already completed.
 '''.strip()
 
-    user_messages, assistant_messages = memory.make_thread_from_working_memory()
+    user_messages, assistant_messages = memory.working_memory.make_virtual_conversation()
 
     # extract the observation from the last user message (this time, the user query is "real" so we need to be more in detail)
     last_observation = user_messages[-1].strip()
@@ -50,11 +39,11 @@ or end the task if the task is already completed.
 
 This time, I'll give you the full content of the current page as follows (I organized the page content as a hierarchical structure):
 ```json
-{memory.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False)}
+{AppState.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False)}
 ```
 Note that `num_prev_actions` property means the number of times the widget has been interacted with so far.
 
-Recall that my current task is: {memory.task}
+Recall that my current task is: {memory.working_memory.task.summary}
 Select the next suitable action to perform, or end the task if the task is already completed.
 
 This time, I am going to provide a template for your output to let you think about my next action step by step. Fill out the <...> parts in the template with your own words. Do not include anything else in your answer except the text to fill out the template. Preserve the formatting and overall template.

@@ -14,7 +14,7 @@ from droidbot.input_event import IntentEvent, KeyEvent
 
 from droidagent import TaskBasedAgent
 
-from device_manager import DeviceManager, recover_activity_stack, ExternalAction
+from device_manager import DeviceManager, ExternalAction, recover_activity_stack, is_loading_state
 from collections import defaultdict, OrderedDict
 from targets import initial_knowledge_map
 
@@ -51,7 +51,6 @@ def main(device, app, persona, debug=False):
     agent = TaskBasedAgent(output_dir, app=app, persona=persona, debug_mode=debug)
     device_manager = DeviceManager(device, app, output_dir=output_dir)
     agent.set_current_gui_state(device_manager.current_state)
-    is_loading_state = False
     need_state_update = False
 
     max_loading_wait = 3
@@ -68,7 +67,7 @@ def main(device, app, persona, debug=False):
         if agent.step_count % 10 == 0:
             print(f'Time left: {round(((7200 - (time.time() - start_time)) / 60), 2)} min')
 
-        if agent.is_loading_state(device_manager.current_state):
+        if is_loading_state(device_manager.current_state):
             loading_wait_count += 1
 
             if loading_wait_count > max_loading_wait:

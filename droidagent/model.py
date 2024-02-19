@@ -1,8 +1,10 @@
 import openai
+import time
 from openai import OpenAI
 from dotenv import load_dotenv 
+
 from .config import agent_config
-import time
+from .utils.logger import Logger
 
 load_dotenv()
 client = OpenAI()
@@ -11,6 +13,8 @@ TIMEOUT = 60
 MAX_TOKENS = 500
 MAX_RETRY = 1000
 TEMPERATURE = 0.6
+
+logger = Logger(__name__)
 
 class APIUsageManager:
     usage = {}
@@ -60,11 +64,11 @@ def get_next_assistant_message(system_message, user_messages, assistant_messages
     # If model is gpt-3.5-turbo-16k-0613 but the tokens in the prompt are less than 4000 tokens, use gpt-3.5-turbo-0613 instead
     if model == "gpt-3.5-turbo-16k-0613" and len(stringify_prompt(zip_messages(system_message, user_messages, assistant_messages))) < 8000: # approximately 4000 tokens
         model = "gpt-3.5-turbo-0613"
-        print(f'Using {model} instead of gpt-3.5-turbo-16k-0613')
+        logger.info(f'Using {model} instead of gpt-3.5-turbo-16k-0613')
     
     if model == "gpt-4-0613" and len(stringify_prompt(zip_messages(system_message, user_messages, assistant_messages))) > 16000:    # approximately 8000 tokens
         model = "gpt-3.5-turbo-16k-0613"
-        print(f'Using {model} instead of gpt-4-0613 (context limit exceeded)')
+        logger.info(f'Using {model} instead of gpt-4-0613 (context limit exceeded)')
 
     start_time = time.time()
 
@@ -124,7 +128,7 @@ def get_next_assistant_message(system_message, user_messages, assistant_messages
                     timeout=TIMEOUT
                 )
         except (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError, openai.RateLimitError):
-            print(f'OpenAI API request errored. Retrying...')
+            logger.info(f'OpenAI API request errored. Retrying...')
             time.sleep(3)
             continue
         except KeyboardInterrupt as e:

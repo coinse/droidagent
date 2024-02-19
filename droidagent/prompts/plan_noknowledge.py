@@ -1,7 +1,8 @@
 from ..config import agent_config
+from ..app_state import AppState
 from ..model import get_next_assistant_message, zip_messages
 from ..functions.possible_actions import *
-from ..utils import *
+from ..utils.stringutil import remove_quotes
 from .act_noknowledge import prompt_text_input, initialize_possible_actions
 
 QUERY_COUNT = 3
@@ -21,7 +22,7 @@ QUERY_COUNT = 3
 def prompt_new_task(memory, prompt_recorder=None):
     # TODO: refer to spatial memory - what is the current page? what are the widgets in the current page?
     # TODO: refer to temporal memory - what are the memorable tasks so far?
-    unvisited_pages = list(set(agent_config.app_activities) - set(memory.visited_activities.keys()))
+    unvisited_pages = list(set(AppState.activities) - set(AppState.visited_activities.keys()))
 
     system_message = f'''
 You are a helpful task planner for using an Android mobile application named {agent_config.app_name}. You are planning for a person named "{agent_config.persona_name}" with the following profile:
@@ -29,9 +30,9 @@ You are a helpful task planner for using an Android mobile application named {ag
 
 {agent_config.persona_name}'s ultimate goal is to {agent_config.ultimate_goal}. 
 
-- {agent_config.app_name} app has following pages: {remove_quotes(str(agent_config.app_activities))} (Note that the pages are listed in random order)
-- Currently, {agent_config.persona_name} has visited the following pages with the following number of times: {remove_quotes(json.dumps(memory.visited_activities))}
-- Currently, {agent_config.persona_name} is on the {memory.current_gui_state.activity} page.
+- {agent_config.app_name} app has following pages: {remove_quotes(str(AppState.activities))} (Note that the pages are listed in random order)
+- Currently, {agent_config.persona_name} has visited the following pages with the following number of times: {remove_quotes(json.dumps(AppState.visited_activities))}
+- Currently, {agent_config.persona_name} is on the {AppState.current_gui_state.activity} page.
 - Pages never visited yet: {remove_quotes(str(unvisited_pages))} 
 
 {agent_config.persona_name} is not familiar with the app and does not fully know how to navigate to each page and what {agent_config.persona_name} can do on each page.
@@ -50,12 +51,12 @@ Plan {agent_config.persona_name}'s next task based on the following information.
 
 {agent_config.persona_name}'s prior knowledge and history of previous tasks so far (listed in chronological order):
 ===
-{memory.retrieve_task_history()}
+{memory.task_memory.retrieve_task_history()}
 ===
 
 Current page (organized in a hierarchical structure):
 ```json
-{memory.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False)}
+{AppState.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False)}
 ```
 Note that `num_prev_actions` means the number of times the widget has been interacted with during the previous tasks. If `num_prev_actions` property is not included in the widget dictionary, {agent_config.persona_name} has never performed any action on the widget yet.
 
@@ -77,7 +78,7 @@ Rough plan for the task in {agent_config.persona_name}'s perspective: <1 sentenc
 '''.strip()]
 
     # Let the planner select the first action
-    possible_action_functions, function_map = initialize_possible_actions(memory)
+    possible_action_functions, function_map = initialize_possible_actions()
 
     assistant_messages.append(get_next_assistant_message(system_message, user_messages, assistant_messages, model=agent_config.planner_model, functions=list(possible_action_functions.values()), function_call_option="none"))
 

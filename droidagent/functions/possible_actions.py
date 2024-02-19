@@ -1,5 +1,18 @@
-from ..action import *
-from ..config import agent_config
+from ..types.action import *
+from ..app_state import AppState
+
+def initialize_possible_actions():
+    possible_action_functions = {}
+    function_map = {}
+    current_context.set_widgets(AppState.current_gui_state.actiontype2widgets)
+    function_creators = [create_touch_action_definition, create_set_text_action_definition, create_scroll_action_definition, create_long_touch_action_definition, create_go_back_action_definition, create_end_task_definition, create_wait_definition]
+
+    for function_creator in function_creators:
+        function_def, func = function_creator()
+        possible_action_functions[function_def['function']['name']] = function_def
+        function_map[function_def['function']['name']] = func
+
+    return possible_action_functions, function_map
 
 class Context:
     def __init__(self):

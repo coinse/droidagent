@@ -1,29 +1,16 @@
 from ..config import agent_config
+from ..app_state import AppState
 from ..model import get_next_assistant_message, zip_messages
 from ..functions.possible_actions import *
-from ..utils import *
+from ..utils.stringutil import remove_quotes
 
 import json
 
 QUERY_COUNT = 3
 
 
-def initialize_possible_actions(memory):
-    possible_action_functions = {}
-    function_map = {}
-    current_context.set_widgets(memory.current_gui_state.actiontype2widgets)
-    function_creators = [create_touch_action_definition, create_set_text_self_contained_action_definition, create_scroll_action_definition, create_long_touch_action_definition]
-
-    for function_creator in function_creators:
-        function_def, func = function_creator()
-        possible_action_functions[function_def['name']] = function_def
-        function_map[function_def['name']] = func
-
-    return possible_action_functions, function_map
-
-
 def prompt_first_action(memory, full_prompt):
-    possible_action_functions, function_map = initialize_possible_actions(memory)
+    possible_action_functions, function_map = initialize_possible_actions()
 
     full_prompt['system_message'] = f'''
 You are a smart GUI testing assistant for an Android mobile application. The user want to test {agent_config.app_name} app. It has the following pages, including {", ".join(agent_config.app_activities)}. When a user requests, select an action by calling one of the given functions that corresponds to a GUI action.
@@ -34,7 +21,7 @@ What GUI action is required? Select one action that is the most effective to tes
 
 Current page:
 ```json
-{memory.current_gui_state.describe_screen()}
+{AppState.current_gui_state.describe_screen()}
 ```
 
 Following types of actions can be performed:
@@ -105,11 +92,11 @@ def prompt_next_action(memory, error_message=None, full_prompt=None, contain_fee
         action_function_query += f'''
 What GUI action is required next? Select one action that is the most effective to test the app.
 
-We have tested following pages with the visit count: {remove_quotes(json.dumps(memory.visited_activities))}
+We have tested following pages with the visit count: {remove_quotes(json.dumps(AppState.visited_activities))}
 
 Current page:
 ```json
-{memory.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False)}
+{AppState.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False)}
 ```
 Note that `num_prev_actions` for each widget means the number of times the widget was tested.
 

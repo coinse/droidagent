@@ -1,5 +1,5 @@
-from .utils import __safe_dict_get, __get_all_children
-from .config import agent_config
+from ..utils.viewtreeutil import __safe_dict_get, __get_all_children
+from ..config import agent_config
 
 from collections import defaultdict
 from droidbot.input_event import SetTextEvent, ScrollEvent, TouchEvent, LongTouchEvent, KeyEvent

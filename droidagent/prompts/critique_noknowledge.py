@@ -1,11 +1,12 @@
 from ..config import agent_config
+from ..app_state import AppState
 from ..model import get_next_assistant_message, zip_messages
-from ..utils import *
+from ..utils.stringutil import add_period
 
 
 def prompt_critique(memory, prompt_recorder=None):
     system_message = f'''
-You are a helpful inspector who can review the GUI actions performed on an Android mobile app named {agent_config.app_name}. The actions are done by a person named "{agent_config.persona_name}" to accomplish the target task: {add_period(memory.task)} {add_period(memory.task_end_condition)}
+You are a helpful inspector who can review the GUI actions performed on an Android mobile app named {agent_config.app_name}. The actions are done by a person named "{agent_config.persona_name}" to accomplish the target task: {add_period(memory.working_memory.task.summary)} {add_period(memory.working_memory.task.end_condition)}
 
 {agent_config.persona_name} has the following profile:
 {agent_config.persona_profile}
@@ -21,13 +22,13 @@ Critique the actions done by {agent_config.persona_name} with respect to the cur
 
 Task execution history so far (listed in chronological order):
 ===
-{memory.describe_working_memory()}
+{memory.working_memory.stringify()}
 ===
 
-Current page: {memory.current_activity} 
+Current page: {AppState.current_activity} 
 Widgets in current page:
 ```json
-{memory.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False, show_id=False)}
+{AppState.current_gui_state.describe_screen_w_memory(memory, include_widget_knowledge=False, show_id=False)}
 ```
 Guideline for criticizing the actions:
 - Note that `num_prev_actions` property means the number of times the widget has been interacted with so far.

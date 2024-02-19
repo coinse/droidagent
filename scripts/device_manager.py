@@ -1,6 +1,8 @@
 from droidbot.utg import UTG
 from droidbot.input_event import IntentEvent, KeyEvent
 
+from droidagent import AppState
+
 from utg import copy_utg_rendering_resources
 
 import time
@@ -98,7 +100,7 @@ class DeviceManager:
             self.pre_event_state = self.current_state
 
         if capture_intermediate_state:
-            agent.capture_temporary_message(self.device.get_current_state())
+            AppState.capture_temporary_message(self.device.get_current_state())
 
         process.terminate()
         stdout, stderr = process.communicate()
@@ -107,7 +109,7 @@ class DeviceManager:
 
         if capture_intermediate_state:
             toast_messages = self.parse_event_log(stdout.decode('utf-8'))
-            agent.capture_toast_message(toast_messages)
+            AppState.capture_toast_message(toast_messages)
         
         self.fetch_device_state()
         
@@ -130,7 +132,7 @@ class DeviceManager:
             'start_state': self.pre_event_state.state_str if self.pre_event_state is not None else None,
             'stop_state': self.current_state.state_str if self.current_state is not None else None,
             'event_str': event.get_event_str(self.pre_event_state) if event is not None else "wait",
-            'task': agent.memory.task if agent is not None else None,
+            'task': agent.task.summary if agent is not None else None,
             'view_image_dir': view_image_dir
         }
         with open(os.path.join(self.events_dir, f'event_{timestamp}.json'), 'w') as f:
@@ -138,6 +140,9 @@ class DeviceManager:
 
         return event_dict
         
+
+def is_loading_state(state):
+    return AppState.is_loading_state(state)
 
 def recover_activity_stack(device_manager, agent, events=[]):
     global num_steps_outside
@@ -155,8 +160,8 @@ def recover_activity_stack(device_manager, agent, events=[]):
         events.append(event_dict)
 
         if device_manager.get_app_activity_depth() == 0:
-            agent.memory.append_to_working_memory(ExternalAction(f'Open the app again because the previous action led to closing the app', events), 'ACTION')
-            agent.clear_temporary_message()
+            agent.inject_action_entry(ExternalAction(f'Open the app again because the previous action led to closing the app', events), 'ACTION')
+            AppState.clear_temporary_message()
             num_steps_outside = 0
             return
 
@@ -164,7 +169,7 @@ def recover_activity_stack(device_manager, agent, events=[]):
     elif device_manager.get_app_activity_depth() > 0:
         num_steps_outside += 1
         if num_steps_outside <= MAX_NUM_STEPS_OUTSIDE:
-            agent.clear_temporary_message()
+            AppState.clear_temporary_message()
             return 
 
         back_button_times = 0
@@ -180,11 +185,11 @@ def recover_activity_stack(device_manager, agent, events=[]):
 
         if device_manager.get_app_activity_depth() == 0:
             if back_button_times > 1:
-                agent.memory.append_to_working_memory(ExternalAction(f'Press the back button {back_button_times} times because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
+                agent.inject_action_entry(ExternalAction(f'Press the back button {back_button_times} times because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
             else:
-                agent.memory.append_to_working_memory(ExternalAction(f'Press the back button because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
+                agent.inject_action_entry(ExternalAction(f'Press the back button because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
             
-            agent.clear_temporary_message()
+            AppState.clear_temporary_message()
             num_steps_outside = 0
             return
 
@@ -195,8 +200,8 @@ def recover_activity_stack(device_manager, agent, events=[]):
     events.append(event_dict)
 
     if device_manager.get_app_activity_depth() == 0:
-        agent.memory.append_to_working_memory(ExternalAction(f'Open the app again because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
-        agent.clear_temporary_message()
+        agent.inject_action_entry(ExternalAction(f'Open the app again because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
+        AppState.clear_temporary_message()
         num_steps_outside = 0
         return
 
@@ -219,8 +224,8 @@ def recover_activity_stack(device_manager, agent, events=[]):
     events.append(event_dict)
 
     if device_manager.get_app_activity_depth() == 0:
-        agent.memory.append_to_working_memory(ExternalAction(f'Open the app again because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
-        agent.clear_temporary_message()
+        agent.inject_action_entry(ExternalAction(f'Open the app again because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
+        AppState.clear_temporary_message()
         num_steps_outside = 0
         return
     
@@ -241,8 +246,8 @@ def recover_activity_stack(device_manager, agent, events=[]):
             events.append(event_dict)
 
         if device_manager.get_app_activity_depth() == 0:
-            agent.memory.append_to_working_memory(ExternalAction(f'Restart the app because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
-            agent.clear_temporary_message()
+            agent.inject_action_entry(ExternalAction(f'Restart the app because you stayed on the pages not belonging to the target app for too long', events), 'ACTION')
+            AppState.clear_temporary_message()
             num_steps_outside = 0
             return
 
